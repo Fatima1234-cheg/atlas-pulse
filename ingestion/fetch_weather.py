@@ -30,6 +30,8 @@ def fetch_city(city: str, lat: float, lon: float, start: str, end: str) -> pd.Da
 
     df = pd.DataFrame(payload["hourly"])
     df["time"] = pd.to_datetime(df["time"])
+   
+    df["time"] = pd.to_datetime(df["time"]).astype("datetime64[us]")
     df["city"] = city
     df["ingested_at"] = pd.Timestamp.utcnow()
     return df
