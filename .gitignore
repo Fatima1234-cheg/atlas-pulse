@@ -5,3 +5,7 @@ data/
 .env
 .vscode/
 test_api.json
+gcp-key.json
+
+.venv/
+

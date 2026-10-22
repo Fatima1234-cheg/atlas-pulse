@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: dim_cities
+    columns:
+      - name: city_name
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_weather_hourly
+    columns:
+      - name: city_name
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_cities')
+              field: city_name
+      - name: temperature_c
+        tests:
+          - not_null
