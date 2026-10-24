@@ -1,0 +1,11 @@
+atlas_pulse_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: plasma-streamer-480323-h7
+      dataset: atlas_pulse_gold
+      threads: 4
+      location: EU
+      keyfile: /opt/airflow/gcp-key.json

@@ -2,21 +2,17 @@
 
 **AtlasPulse** est un projet complet de Data Engineering qui collecte, stocke, transforme et modélise des données météorologiques horaires pour cinq villes marocaines. L'objectif est de construire un pipeline de données de bout en bout (End-to-End) permettant d'étudier les épisodes de chaleur et les fortes précipitations.
 
-> **État du projet :** ✅ **Terminé.** Le pipeline complet est opérationnel, de l'ingestion API jusqu'au tableau de bord décisionnel.
+> **État du projet :** ✅ **Terminé.** Le pipeline complet est opérationnel et automatisé, de l'ingestion API jusqu'au tableau de bord décisionnel.
 
 ---
 
 ## Aperçu du Dashboard (Power BI)
-
-
 
 ### Vue d'ensemble et cartographie
 ![Vue d'ensemble](docs/dashboard_page1.png)
 
 ### Tendances et analyse mensuelle & Événements extrêmes (canicules)
 ![Tendances](docs/dashboard_page2.png)
-
-
 
 ---
 
@@ -26,6 +22,7 @@
 - [Stack technique](#stack-technique)
 - [Résultats actuels](#résultats-actuels)
 - [Architecture du pipeline](#architecture-du-pipeline)
+- [Orchestration avec Apache Airflow](#orchestration-avec-apache-airflow)
 - [Modèle de données Power BI](#modèle-de-données-power-bi)
 - [Mesures DAX](#mesures-dax)
 - [Contrôles de qualité (dbt)](#contrôles-de-qualité-dbt)
@@ -51,6 +48,7 @@ Le projet répond à des questions telles que :
 - Transformation distribuée avec PySpark.
 - Entrepôt de données cloud (BigQuery Sandbox).
 - Modélisation analytique et tests de qualité avec dbt.
+- **Orchestration et automatisation avec Apache Airflow.**
 - Visualisation avec Power BI.
 
 ---
@@ -65,8 +63,8 @@ Le projet répond à des questions telles que :
 | **Transformation** | PySpark 3.5 (Docker, Java 17) | ✅ Implémenté |
 | **Entrepôt cloud** | Google BigQuery (Sandbox) | ✅ Implémenté |
 | **Modélisation & tests** | dbt (Data Build Tool) | ✅ Implémenté |
+| **Orchestration** | **Apache Airflow (Docker)** | ✅ **Implémenté** |
 | **Visualisation** | Power BI Desktop | ✅ Implémenté |
-| **Orchestration** | Apache Airflow | 🔄 À venir |
 
 ---
 
@@ -81,12 +79,19 @@ Le projet répond à des questions telles que :
 | Temps de transformation Silver | Environ 34,7 secondes |
 | Tables Gold créées dans BigQuery | 6 modèles dbt |
 | Qualité des données | 0 doublon, 0 null (validé par 6 tests dbt) |
+| Orchestration | 3 tâches automatisées dans un DAG Airflow |
 
 ---
 
 ## Architecture du pipeline
 
 ```text
+                   ┌─────────────────────────┐
+                   │   Apache Airflow        │
+                   │ (Orchestrateur / DAG)   │
+                   └────────────┬────────────┘
+                                │ Déclenche et surveille les tâches
+                                ▼
                    ┌─────────────────────────┐
                    │      Open-Meteo API     │
                    └────────────┬────────────┘
@@ -121,7 +126,7 @@ Le projet répond à des questions telles que :
                                ▼
           ┌────────────────────────────────────────┐
           │                POWER BI                │
-          │ Dashboard interactif (3 pages)         │
+          │ Dashboard interactif (2 pages)         │
           └────────────────────────────────────────┘
 ```
 
@@ -133,6 +138,34 @@ Le projet répond à des questions telles que :
   - `dim_cities` et `dim_dates` : dimensions.
   - `agg_city_daily` et `fct_weather_hourly` : faits.
   - `fct_heatwave_events` : modèle SQL avancé détectant les canicules (jours consécutifs > 35 °C).
+
+---
+
+## Orchestration avec Apache Airflow
+
+Le pipeline est entièrement automatisé via **Apache Airflow**, exécuté dans un conteneur Docker avec `LocalExecutor`. Le DAG `atlas_pulse_pipeline` s'exécute quotidiennement (`@daily`) et gère les dépendances entre les tâches.
+
+### Structure du DAG
+
+Le DAG est composé de trois tâches séquentielles :
+
+1. `ingestion_api` (BashOperator) : exécute le script Python de téléchargement des données.
+2. `spark_bronze_to_silver` (BashOperator) : lance le conteneur PySpark via le socket Docker (`sudo docker exec`).
+3. `dbt_run_gold` (BashOperator) : exécute les modèles dbt pour mettre à jour BigQuery.
+
+### Configuration Docker et accès
+
+L'environnement Airflow est défini dans le `docker-compose.yml` :
+
+- **Ports** : l'interface web d'Airflow est accessible sur `http://localhost:8081` (port choisi pour éviter les conflits avec d'autres projets).
+- **Volumes** : partage de `gcp-key.json` et `profiles.yml` pour que dbt puisse s'authentifier sur Google Cloud.
+- **Permissions** : l'image personnalisée `Dockerfile.airflow` accorde les droits `sudo` à l'utilisateur Airflow pour qu'il puisse communiquer avec le démon Docker.
+
+### Aperçu du DAG
+
+L'image ci-dessous montre l'interface d'Airflow avec les 3 tâches exécutées avec succès (en vert).
+
+![Airflow DAG](docs/airflow_dag.png)
 
 ---
 
@@ -253,38 +286,29 @@ Les tests dbt garantissent l'intégrité des données dans l'entrepôt :
 - Compte Google Cloud (avec BigQuery Sandbox)
 - Git
 
-### 1. Ingestion des données (local)
+### 1. Démarrage de l'infrastructure (Airflow + Spark + PostgreSQL)
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-
-# Récupération des données depuis l'API
-python -m ingestion.fetch_weather
-```
-
-### 2. Transformation vers Silver (Docker PySpark)
-
-```powershell
+# Construction de l'image Airflow personnalisée
 docker compose build
+
+# Démarrage de tous les services en arrière-plan
 docker compose up -d
-docker compose exec spark python -m spark_jobs.bronze_to_silver
+
+# Vérification de l'état (attendre que airflow-init soit terminé)
+docker compose ps
 ```
 
-### 3. Chargement vers BigQuery et modélisation dbt
+L'interface Airflow est accessible sur **`http://localhost:8081`** (identifiants : `airflow` / `airflow`).
 
-```powershell
-# Envoi des données consolidées vers BigQuery
-python full_pipeline.py
+### 2. Déclenchement du pipeline
 
-# Lancement des modèles dbt
-cd atlas_pulse_dbt
-python -c "from dbt.cli.main import cli; cli()" run
-python -c "from dbt.cli.main import cli; cli()" test
-```
+1. Connectez-vous à l'interface Airflow.
+2. Activez le DAG `atlas_pulse_pipeline` (bouton à gauche).
+3. Cliquez sur **Trigger DAG** (bouton Play).
+4. Suivez l'exécution des 3 tâches dans la vue **Graph**.
 
-### 4. Visualisation
+### 3. Visualisation
 
 Ouvrez Power BI Desktop, connectez-vous à votre projet BigQuery (`atlas_pulse_gold`) et chargez les tables `dim_cities`, `dim_dates`, `agg_city_daily`, `fct_weather_hourly` et `fct_heatwave_events`. Vérifiez ensuite les relations décrites dans la section [Modèle de données Power BI](#modèle-de-données-power-bi).
 
@@ -295,5 +319,5 @@ Ouvrez Power BI Desktop, connectez-vous à votre projet BigQuery (`atlas_pulse_g
 **Fatima Chegdani**
 Élève ingénieure en Génie Informatique et Intelligence Artificielle — ENSA Safi
 
-- LinkedIn : Fatima Chegdani
+- LinkedIn : [www.linkedin.com/in/fatima-chegdani-44b840274](https://www.linkedin.com/in/fatima-chegdani-44b840274)
 - GitHub : [Fatima1234-cheg](https://github.com/Fatima1234-cheg)

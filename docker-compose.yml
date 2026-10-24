@@ -1,3 +1,24 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment:
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+    - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOesRu8mWvBpdO6Q6Z4u65i5T8iV1C-wI=
+    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+    - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/gcp-key.json
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./ingestion:/opt/airflow/project/ingestion
+    - ./spark_jobs:/opt/airflow/project/spark_jobs
+    - ./atlas_pulse_dbt:/opt/airflow/project/atlas_pulse_dbt
+    - ./data:/opt/airflow/project/data
+    - ./gcp-key.json:/opt/airflow/gcp-key.json
+    - ./profiles.yml:/home/airflow/.dbt/profiles.yml
+    - /var/run/docker.sock:/var/run/docker.sock
+
 services:
   spark:
     build: .
@@ -11,3 +32,44 @@ services:
     stdin_open: true
     tty: true
     command: ["tail", "-f", "/dev/null"]
+
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    command: bash -c "airflow db migrate && airflow users create --username airflow --password airflow --firstname Admin --lastname User --role Admin --email admin@example.com"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
